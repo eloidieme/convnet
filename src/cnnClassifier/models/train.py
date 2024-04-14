@@ -1,11 +1,13 @@
 import numpy as np
 import matplotlib.pyplot as plt
+import seaborn as sns
 import tqdm
-import json
 import os
-from typing import List
 
 from cnnClassifier import logger
+
+CLASS_LABELS = ["Arabic", "Chinese", "Czech", "Dutch", "English", "French", "German", "Greek", "Irish",
+                "Italian", "Japanese", "Korean", "Polish", "Portuguese", "Russian", "Scottish", "Spanish", "Vietnamese"]
 
 
 def softmax(x):
@@ -15,7 +17,7 @@ def softmax(x):
 
 
 class CNN:
-    def __init__(self, X_train, Y_train, network_params, metadata, validation=None, seed=None) -> None:
+    def __init__(self, X_train, Y_train, network_params, gd_params, metadata, validation=None, seed=None) -> None:
         if seed:
             np.random.seed(seed)
         self.X_train = X_train
@@ -33,6 +35,8 @@ class CNN:
         self.k2 = network_params['k2']
         self.eta = network_params['eta']  # learning rate
         self.rho = network_params['rho']  # momentum term
+        self.n_batch = gd_params['n_batch']  # no of samples in one batch
+        self.n_epochs = gd_params['n_epochs']  # no of epochs to train
         self.d = metadata['dimensionality']  # dimensionality
         self.K = metadata['n_classes']  # number of classes
         self.n_len = metadata['n_len']  # max len of a name
@@ -130,7 +134,110 @@ class CNN:
     def compute_accuracy(self, X, y, F, W):
         MFs = [self.make_mf_matrix(F[0], self.n_len),
                self.make_mf_matrix(F[1], self.n_len1)]
-        P = self._evaluate_classifier(X, MFs, W)[-1]
-        y_pred = np.argmax(P, axis=0)
+        P = self.evaluate_classifier(X, MFs, W)[-1]
+        y_pred = np.argmax(P, axis=0) + 1
         correct = y_pred[y == y_pred].shape[0]
         return correct / y_pred.shape[0]
+
+    def compute_confusion_matrix(self, X, y, F, W):
+        MFs = [self.make_mf_matrix(F[0], self.n_len),
+               self.make_mf_matrix(F[1], self.n_len1)]
+        P = self.evaluate_classifier(X, MFs, W)[-1]
+        n_classes, n_samples = P.shape
+        y_pred = np.argmax(P, axis=0)
+        confusion_matrix = np.zeros((n_classes, n_classes), dtype=int)
+        for true_class, pred_class in zip(y, y_pred):
+            confusion_matrix[int(true_class) - 1, pred_class] += 1
+        return confusion_matrix
+
+    def plot_confusion_matrix(self, conf_matrix, classes, savepath, title='Confusion Matrix', cmap=plt.cm.Blues):
+        plt.clf()
+        plt.figure(figsize=(15, 15))
+        sns.heatmap(conf_matrix, annot=True, fmt='d', cmap=cmap,
+                    xticklabels=classes, yticklabels=classes)
+        plt.title(title)
+        plt.ylabel('True Label')
+        plt.xlabel('Predicted Label')
+        plt.savefig(savepath)
+
+    def mini_batch_gd(self, n_update=500):
+        train_losses = [self.compute_loss(
+            self.X_train, self.Y_train, self.F, self.W)]
+        val_losses = [self.compute_loss(
+            self.X_val, self.Y_val, self.F, self.W)] if self.validation else None
+        val_accs = [self.compute_accuracy(
+            self.X_val, self.y_val, self.F, self.W)] if self.validation else None
+        n = self.X_train.shape[1]
+        for i in range(self.n_epochs):
+            print(f"Epoch {i+1}/{self.n_epochs}")
+            for j in tqdm.tqdm(range(1, int(n/self.n_batch) + 1)):
+                start = (j-1)*self.n_batch
+                end = j*self.n_batch
+                perm = np.random.permutation(n)
+                X_batch = self.X_train[:, perm][:, start:end]
+                Y_batch = self.Y_train[:, perm][:, start:end]
+                dW, dF1, dF2 = self.compute_gradients(
+                    X_batch, Y_batch, self.F, self.W)
+                self.W -= self.eta*dW
+                self.F[0] -= self.eta*dF1
+                self.F[1] -= self.eta*dF2
+                if (i*self.n_batch + j) % n_update == 0:
+                    current_train_loss = self.compute_loss(
+                        self.X_train, self.Y_train, self.F, self.W)
+                    print(f"\t * Train loss: {current_train_loss}")
+                    train_losses.append(current_train_loss)
+                    if self.validation:
+                        current_val_loss = self.compute_loss(
+                            self.X_val, self.Y_val, self.F, self.W)
+                        print(f"\t * Validation loss: {current_val_loss}")
+                        val_losses.append(current_val_loss)
+                        current_val_acc = self.compute_accuracy(
+                            self.X_val, self.y_val, self.F, self.W)
+                        val_accs.append(current_val_acc)
+                        conf_mat = self.compute_confusion_matrix(
+                            self.X_val, self.y_val, self.F, self.W)
+                        self.plot_confusion_matrix(conf_mat, CLASS_LABELS, f"./reports/figures/conf_mat_{i*self.n_batch + j}")
+        return train_losses, val_losses, val_accs
+
+    def run_training(self, n_update=500, figure_savepath=None, test_data=None, model_savepath=None):
+        train_losses, val_losses, val_accs = self.mini_batch_gd(n_update)
+        logger.info("Training completed.")
+
+        if model_savepath:
+            os.makedirs(f"{model_savepath}", exist_ok=True)
+            np.save(f"{model_savepath}/F1", self.F[0])
+            np.save(f"{model_savepath}/F2", self.F[1])
+            np.save(f"{model_savepath}/W", self.W)
+
+        if test_data:
+            (X_test, y_test) = test_data
+            accuracy = self.compute_accuracy(X_test, y_test, self.F, self.W)
+            print(f"Accuracy on test data: {accuracy}")
+            logger.info("Accuracy on test data: %.3f", accuracy)
+
+        plt.clf()
+        plt.plot(np.arange(0, len(train_losses))*n_update,
+                 train_losses, label="training loss")
+        plt.plot(np.arange(0, len(val_losses))*n_update,
+                 val_losses, label="validation loss")
+        plt.xlabel(f"update steps")
+        plt.ylabel("cross-entropy loss")
+        plt.legend()
+        plt.title(
+            f"Training curves (n_batch = {self.n_batch}, n_epochs = {self.n_epochs}, eta = {self.eta})")
+        plt.grid()
+        if figure_savepath:
+            plt.savefig(figure_savepath + "_loss", bbox_inches='tight')
+        plt.clf()
+        plt.plot(np.arange(0, len(val_accs))*n_update,
+                 val_accs, label="validation accuracies")
+        plt.xlabel(f"update steps")
+        plt.ylabel("accuracy")
+        plt.legend()
+        plt.title(
+            f"Accuracy (n_batch = {self.n_batch}, n_epochs = {self.n_epochs}, eta = {self.eta})")
+        plt.grid()
+        if figure_savepath:
+            plt.savefig(figure_savepath + "_accuracy", bbox_inches='tight')
+
+        logger.info("Figure saved.")
