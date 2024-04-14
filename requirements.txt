@@ -13,3 +13,4 @@ scipy
 ipykernel
 tqdm
 seaborn
+cupy-cuda12x

@@ -135,7 +135,7 @@ class CNN_GPU:
         y_pred = cp.argmax(P, axis=0)
         confusion_matrix = cp.zeros((self.K, self.K), dtype=int)
         for true_class, pred_class in zip(y, y_pred):
-            confusion_matrix[true_class - 1, pred_class] += 1
+            confusion_matrix[int(true_class) - 1, pred_class] += 1
         return confusion_matrix
 
     def plot_confusion_matrix(self, conf_matrix, classes, savepath, title='Confusion Matrix', cmap=plt.cm.Blues):
