@@ -82,10 +82,8 @@ class CNN_GPU:
     def compute_loss(self, X_batch, Y_batch, F, W):
         MFs = [self.make_mf_matrix(F[0], self.n_len), self.make_mf_matrix(F[1], self.n_len1)]
         _, _, P_batch = self.evaluate_classifier(X_batch, MFs, W)
-        n_samples = Y_batch.shape[1]
-        log_probs = cp.log(P_batch)
-        cross_entropy = -cp.sum(Y_batch * log_probs)
-        average_loss = cross_entropy / n_samples
+        cross_entropy = -cp.sum(Y_batch * cp.log(P_batch))
+        average_loss = cross_entropy / Y_batch.shape[1]
         return average_loss
 
     def evaluate_classifier(self, X_batch, MFs, W):
@@ -99,8 +97,8 @@ class CNN_GPU:
 
     def compute_gradients(self, X_batch, Y_batch, F, W):
         MFs = [self.make_mf_matrix(F[0], self.n_len), self.make_mf_matrix(F[1], self.n_len1)]
-        dF1 = cp.zeros_like(F[0])
-        dF2 = cp.zeros_like(F[1])
+        dF1 = cp.zeros(F[0].size)
+        dF2 = cp.zeros(F[1].size)
         X1_batch, X2_batch, P_batch = self.evaluate_classifier(X_batch, MFs, W)
         n = X_batch.shape[1]
         fact = 1/n
