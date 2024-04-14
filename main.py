@@ -3,7 +3,7 @@ import numpy as np
 from copy import deepcopy
 from cnnClassifier.data.make_dataset import DataLoader
 
-np.random.seed(400)
+np.random.seed(42)
 
 load = DataLoader()
 data = load.make_data()
@@ -17,10 +17,10 @@ X_val = data_file['X_val']
 Y_val = data_file['Y_val']
 y_val = data_file['y_val']
 
-n1 = 5  # number of filters at layer 1
-k1 = 5  # width of the filters at layer 1 (final shape: d x k1)
-n2 = 5  # number of filters at layer 2
-k2 = 5  # width of the filters at layer 1 (final shape: d x k2)
+n1 = 1  # number of filters at layer 1
+k1 = 2  # width of the filters at layer 1 (final shape: d x k1)
+n2 = 1  # number of filters at layer 2
+k2 = 2  # width of the filters at layer 1 (final shape: d x k2)
 eta = 0.001  # learning rate
 rho = 0.9  # momentum term
 
@@ -45,6 +45,7 @@ W = np.random.normal(0.0, sigma3, (K, f_size))  # FC layer weights
 
 x_input = X_train[:, 0]  # sample name
 X_input = x_input.reshape((-1, n_len), order='F')
+
 
 def make_mf_matrix(F, n_len):
     dd, k, nf = F.shape
@@ -73,7 +74,6 @@ def make_mx_matrix(x_input, d, k, nf, n_len):
     return Mx
 
 ###### TEST MF & MX MATRICES ######
-
 
 d, k, nf = F[0].shape
 assert ((n_len-k+1)*nf, n_len*d) == make_mf_matrix(F[0], n_len).shape
@@ -107,7 +107,7 @@ assert np.allclose(s1, s2)
 
 
 def softmax(x):
-    x = x - np.max(x, axis=0)  # for numerical stability
+    x = x - np.max(x, axis=0)
     exp_x = np.exp(x)
     return exp_x / np.sum(exp_x, axis=0)
 
@@ -115,9 +115,12 @@ def softmax(x):
 def compute_loss(X_batch, Y_batch, F, W):
     MFs = [make_mf_matrix(F[0], n_len), make_mf_matrix(F[1], n_len1)]
     _, _, P_batch = evaluate_classifier(X_batch, MFs, W)
-    fact = 1/X_batch.shape[1]
-    lcross_sum = np.sum(np.diag(-Y_batch.T@np.log(P_batch)))
-    return fact*lcross_sum
+    n_samples = Y_batch.shape[1]
+    log_probs = np.log(P_batch)
+    cross_entropy = -np.sum(Y_batch * log_probs)
+    average_loss = cross_entropy / n_samples
+    return average_loss
+
 
 def evaluate_classifier(X_batch, MFs, W):
     s1 = MFs[0] @ X_batch
@@ -137,64 +140,59 @@ def compute_gradients(X_batch, Y_batch, F, W):
     n = X_batch.shape[1]
     fact = 1/n
     G_batch = -(Y_batch - P_batch)
-    dW = fact*(G_batch@X2_batch.T)
+    dW = fact*(G_batch @ X2_batch.T)
     G_batch = W.T @ G_batch
-    G_batch = G_batch * (X2_batch > 0)
-    for i in range(n):
-        gi = G_batch[:, i]
-        xi = X1_batch[:, i]
-        v = gi.T @ make_mx_matrix(xi, n1, k2, n2, n_len1)
+    G_batch = G_batch * np.where(X2_batch > 0, 1, 0)
+    for j in range(n):
+        gj = G_batch[:, j]
+        xj = X1_batch[:, j]
+        v = gj.T @ make_mx_matrix(xj, n1, k2, n2, n_len1)
         dF2 += fact*v
     G_batch = MFs[1].T @ G_batch
-    G_batch = G_batch * (X1_batch > 0)
-    for i in range(n):
-        gi = G_batch[:, i]
-        xi = X_batch[:, i]
-        v = gi.T @ make_mx_matrix(xi, d, k1, n1, n_len)
+    G_batch = G_batch * np.where(X1_batch > 0, 1, 0)
+    for j in range(n):
+        gj = G_batch[:, j]
+        xj = X_batch[:, j]
+        v = gj.T @ make_mx_matrix(xj, d, k1, n1, n_len)
         dF1 += fact*v
     return dW, dF1.reshape(d, k1, n1), dF2.reshape(n1, k2, n2)
 
 
-def numerical_gradients(X_inputs, Ys, F, W, h):
-    dFs = [np.zeros_like(F[0]), np.zeros_like(F[1])]
-    ns = [F[0].shape[2], F[1].shape[2]]
+def numerical_gradients(X_inputs, Ys, F, W, h=1e-5):
+    dFs = [np.zeros_like(F_layer) for F_layer in F]
+    for l in range(len(F)):
+        try_F = deepcopy(F)
+        for i in range(F[l].shape[2]):
+            dF = np.zeros_like(F[l][:, :, i])
+            for j in range(dF.size):
+                try_F[l][:, :, i].flat[j] -= h
+                l1 = compute_loss(X_inputs, Ys, try_F, W)
 
-    try_F = deepcopy(F)
-    for l in range(len(try_F)):
-        for i in range(ns[l]):
-            dF = np.zeros(np.prod(F[l][:, :, i].shape))
-            for j in range(len(dF)):
-                try1_F = deepcopy(try_F)
-                try1_F[l][:, :, i].flat[j] -= h
-                l1 = compute_loss(X_inputs, Ys, try1_F, W)
+                try_F[l][:, :, i].flat[j] += 2 * h
+                l2 = compute_loss(X_inputs, Ys, try_F, W)
 
-                try2_F = deepcopy(try_F)
-                try2_F[l][:, :, i].flat[j] += h
-                l2 = compute_loss(X_inputs, Ys, try2_F, W)
-                dF[j] = (l2 - l1) / (2 * h)
-            dFs[l][:, :, i] = dF.reshape(F[l][:, :, i].shape)
+                try_F[l][:, :, i].flat[j] -= h
+
+                dF.flat[j] = (l2 - l1) / (2 * h)
+            dFs[l][:, :, i] = dF
 
     try_W = np.copy(W)
-    dW = np.zeros(np.prod(try_W.shape))
-    for j in range(len(dW)):
-        W_try1 = np.array(try_W, copy=True)
-        W_try1.flat[j] = try_W.flat[j] - h
+    dW = np.zeros_like(W)
+    for j in range(dW.size):
+        try_W.flat[j] -= h
+        l1 = compute_loss(X_inputs, Ys, F, try_W)
 
-        l1 = compute_loss(X_inputs, Ys, F, W_try1)
+        try_W.flat[j] += 2 * h
+        l2 = compute_loss(X_inputs, Ys, F, try_W)
 
-        W_try2 = np.array(try_W, copy=True)
-        W_try2.flat[j] = try_W.flat[j] + h
-
-        l2 = compute_loss(X_inputs, Ys, F, W_try2)
-
-        dW[j] = (l2 - l1) / (2 * h)
-    dW = dW.reshape(try_W.shape)
+        try_W.flat[j] -= h
+        dW.flat[j] = (l2 - l1) / (2 * h)
 
     return dW, dFs[0], dFs[1]
 
 
-X_batch = X_train[:, :2]
-Y_batch = Y_train[:, :2]
+X_batch = X_train[:, :1]
+Y_batch = Y_train[:, :1]
 MFs = [make_mf_matrix(F[0], n_len), make_mf_matrix(F[1], n_len1)]
 X1_batch, X2_batch, P_batch = evaluate_classifier(X_batch, MFs, W)
 print(X_batch.shape, X1_batch.shape, X2_batch.shape, P_batch.shape, sep='\n')
