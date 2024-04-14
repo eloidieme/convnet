@@ -1,4 +1,6 @@
+from scipy.signal import convolve2d
 import numpy as np
+from copy import deepcopy
 from cnnClassifier.data.make_dataset import DataLoader
 
 np.random.seed(400)
@@ -31,21 +33,24 @@ n_len2 = n_len1 - k2 + 1
 
 f_size = n2 * n_len2
 
-# USE HE INIT FOR SIGMAS
-sigma1 = 0.3
-sigma2 = 0.3
-sigma3 = 0.3
+p = 0.01  # density of non-zero elements in X_input
+sigma1 = np.sqrt(2/(p*d*k1*n1))
+sigma2 = np.sqrt(2/(n1*k2*n2))
+sigma3 = np.sqrt(2/f_size)
 
-F = []
+F = []  # filters
 F.append(np.random.normal(0.0, sigma1, (d, k1, n1)))
 F.append(np.random.normal(0.0, sigma2, (n1, k2, n2)))
-W = np.random.normal(0.0, sigma3, (K, f_size))
+W = np.random.normal(0.0, sigma3, (K, f_size))  # FC layer weights
+
+x_input = X_train[:, 0]  # sample name
+X_input = x_input.reshape((-1, n_len), order='F')
 
 def make_mf_matrix(F, n_len):
     dd, k, nf = F.shape
     V_F = []
     for i in range(nf):
-        V_F.append(F[:,:,i].flatten())
+        V_F.append(F[:, :, i].flatten(order='F'))
     V_F = np.array(V_F)
     zero_nlen = np.zeros((dd, nf))
     kk = n_len - k
@@ -57,33 +62,77 @@ def make_mf_matrix(F, n_len):
     Mf = np.concatenate(Mf, axis=0)
     return Mf
 
-def make_mx_matrix(X_input, d, k, nf, n_len):
+
+def make_mx_matrix(x_input, d, k, nf, n_len):
+    X_input = x_input.reshape((-1, n_len), order='F')
     I_nf = np.eye(nf)
     Mx = []
     for i in range(n_len - k + 1):
-        Mx.append(np.kron(I_nf, X_input[:d,i:i+k].ravel(order='F').T))
+        Mx.append(np.kron(I_nf, X_input[:d, i:i+k].ravel(order='F').T))
     Mx = np.concatenate(Mx, axis=0)
     return Mx
 
+###### TEST MF & MX MATRICES ######
+
+
+d, k, nf = F[0].shape
+assert ((n_len-k+1)*nf, n_len*d) == make_mf_matrix(F[0], n_len).shape
+assert ((n_len - k + 1)*nf, k*nf *
+        d) == make_mx_matrix(X_input, d, k, nf, n_len).shape
+
+X_t = np.random.standard_normal((4, 4))
+F_t = np.random.standard_normal((4, 2, 1))
+
+s1 = convolve2d(X_t, np.flip(F_t[:, :, 0]), mode='valid')[0]
+s2 = []
+for i in range(3):
+    s2.append(X_t[:, i:i+2].flatten() @ F_t[:, :, 0].flatten())
+s2 = np.array(s2)
+mf = make_mf_matrix(F_t, 4)
+s3 = mf @ X_t.flatten(order='F')
+d, k, nf = F_t.shape
+mx = make_mx_matrix(X_t.flatten(order='F'), d, k, nf, 4)
+s4 = mx @ F_t[:, :, 0].flatten(order='F')
+print(s1, s2, s3, s4, sep='\n')
+assert np.allclose(s1, s2) and np.allclose(s2, s3) and np.allclose(s3, s4)
+
+d, k, nf = F[0].shape
+MX = make_mx_matrix(x_input, d, k, nf, n_len)
+MF = make_mf_matrix(F[0], n_len)
+s1 = MX @ F[0].flatten(order='F')
+s2 = MF @ x_input
+assert np.allclose(s1, s2)
+
+##################################
+
+
 def softmax(x):
-    return np.exp(x) / np.sum(np.exp(x), axis=0)
+    x = x - np.max(x, axis=0)  # for numerical stability
+    exp_x = np.exp(x)
+    return exp_x / np.sum(exp_x, axis=0)
 
-def evaluate_classifier(X_batch, MFs, W):
-    s1 = MFs[0] @ X_batch
-    X1_batch = np.maximum(np.zeros_like(s1), s1)
-    s2 = MFs[1] @ X1_batch
-    X2_batch = np.maximum(np.zeros_like(s2), s2)
-    S_batch = W@X2_batch
-    P_batch = softmax(S_batch)
-    return X1_batch, X2_batch, P_batch
 
-def compute_loss(X_batch, Y_batch, MFs, W):
+def compute_loss(X_batch, Y_batch, F, W):
+    MFs = [make_mf_matrix(F[0], n_len), make_mf_matrix(F[1], n_len1)]
     _, _, P_batch = evaluate_classifier(X_batch, MFs, W)
     fact = 1/X_batch.shape[1]
     lcross_sum = np.sum(np.diag(-Y_batch.T@np.log(P_batch)))
     return fact*lcross_sum
 
-def compute_gradients(X_batch, Y_batch, MFs, W):
+def evaluate_classifier(X_batch, MFs, W):
+    s1 = MFs[0] @ X_batch
+    X1_batch = np.maximum(0, s1)
+    s2 = MFs[1] @ X1_batch
+    X2_batch = np.maximum(0, s2)
+    S_batch = W @ X2_batch
+    P_batch = softmax(S_batch)
+    return X1_batch, X2_batch, P_batch
+
+
+def compute_gradients(X_batch, Y_batch, F, W):
+    MFs = [make_mf_matrix(F[0], n_len), make_mf_matrix(F[1], n_len1)]
+    dF1 = np.zeros(np.prod(F[0].shape))
+    dF2 = np.zeros(np.prod(F[1].shape))
     X1_batch, X2_batch, P_batch = evaluate_classifier(X_batch, MFs, W)
     n = X_batch.shape[1]
     fact = 1/n
@@ -91,94 +140,67 @@ def compute_gradients(X_batch, Y_batch, MFs, W):
     dW = fact*(G_batch@X2_batch.T)
     G_batch = W.T @ G_batch
     G_batch = G_batch * (X2_batch > 0)
-    g_0 = G_batch[:, 0]
-    X_0 = np.reshape(X1_batch[:, 0], (n1, -1))
-    v = g_0.T @ make_mx_matrix(X_0, n1, k2, n2, n_len1)
-    dF2 = fact*v
-    for i in range(1, n):
+    for i in range(n):
         gi = G_batch[:, i]
-        Xi = np.reshape(X1_batch[:, i], (n1, -1))
-        v = gi.T @ make_mx_matrix(Xi, n1, k2, n2, n_len1)
+        xi = X1_batch[:, i]
+        v = gi.T @ make_mx_matrix(xi, n1, k2, n2, n_len1)
         dF2 += fact*v
     G_batch = MFs[1].T @ G_batch
     G_batch = G_batch * (X1_batch > 0)
-    g_0 = G_batch[:, 0]
-    X_0 = np.reshape(X_batch[:, 0], (d, -1))
-    v = g_0.T @ make_mx_matrix(X_0, d, k1, n1, n_len)
-    dF1 = fact*v
-    for i in range(1, n):
+    for i in range(n):
         gi = G_batch[:, i]
-        Xi = np.reshape(X_batch[:, i], (d, -1))
-        v = gi.T @ make_mx_matrix(Xi, d, k1, n1, n_len)
+        xi = X_batch[:, i]
+        v = gi.T @ make_mx_matrix(xi, d, k1, n1, n_len)
         dF1 += fact*v
-    return dW, dF1.reshape(d, k1, n1), dF2.reshape(n1, k2, n2)   
+    return dW, dF1.reshape(d, k1, n1), dF2.reshape(n1, k2, n2)
 
-def NumericalGradient(X_inputs, Ys, ConvNet, h):
-    try_ConvNet = ConvNet.copy()
-    Gs = [None] * (len(ConvNet['F']) + 1)  # Create a list to store gradients for each F and W
 
-    # Compute gradients for convolutional layers
-    for l in range(len(ConvNet['F'])):
-        try_ConvNet['F'][l] = np.array(ConvNet['F'][l], copy=True)
-        
-        Gs[l] = np.zeros_like(ConvNet['F'][l])
-        nf = ConvNet['F'][l].shape[2]
-        
-        for i in range(nf):
-            try_ConvNet['F'][l] = np.array(ConvNet['F'][l], copy=True)
-            F_try = np.squeeze(ConvNet['F'][l][:, :, i])
-            G = np.zeros(np.prod(F_try.shape))
-            
-            for j in range(len(G)):
-                F_try1 = np.array(F_try, copy=True)
-                F_try1.flat[j] = F_try.flat[j] - h
-                try_ConvNet['F'][l][:, :, i] = F_try1.reshape(F_try.shape)
-                
-                l1 = compute_loss(X_inputs, Ys, MFs, try_ConvNet['W'])
-                
-                F_try2 = np.array(F_try, copy=True)
-                F_try2.flat[j] = F_try.flat[j] + h
-                try_ConvNet['F'][l][:, :, i] = F_try2.reshape(F_try.shape)
-                
-                l2 = compute_loss(X_inputs, Ys, MFs, try_ConvNet['W'])
-                
-                G[j] = (l2 - l1) / (2 * h)
-                try_ConvNet['F'][l][:, :, i] = F_try  # Reset to original F
-            
-            Gs[l][:, :, i] = G.reshape(F_try.shape)
-    
-    # Compute the gradient for the fully connected layer
-    W_try = ConvNet['W']
-    G = np.zeros(np.prod(W_try.shape))
-    for j in range(len(G)):
-        W_try1 = np.array(W_try, copy=True)
-        W_try1.flat[j] = W_try.flat[j] - h
-        try_ConvNet['W'] = W_try1
-        
-        l1 = compute_loss(X_inputs, Ys, MFs, try_ConvNet['W'])
-        
-        W_try2 = np.array(W_try, copy=True)
-        W_try2.flat[j] = W_try.flat[j] + h
-        try_ConvNet['W'] = W_try2
-        
-        l2 = compute_loss(X_inputs, Ys, MFs, try_ConvNet['W'])
-        
-        G[j] = (l2 - l1) / (2 * h)
-        try_ConvNet['W'] = W_try  # Reset to original W
-    
-    Gs[-1] = G.reshape(W_try.shape)
-    
-    return Gs
+def numerical_gradients(X_inputs, Ys, F, W, h):
+    dFs = [np.zeros_like(F[0]), np.zeros_like(F[1])]
+    ns = [F[0].shape[2], F[1].shape[2]]
 
-X_batch = X_train[:,:100]
-Y_batch = Y_train[:,:100]
-ConvNet = {'F': F, 'W': W}
+    try_F = deepcopy(F)
+    for l in range(len(try_F)):
+        for i in range(ns[l]):
+            dF = np.zeros(np.prod(F[l][:, :, i].shape))
+            for j in range(len(dF)):
+                try1_F = deepcopy(try_F)
+                try1_F[l][:, :, i].flat[j] -= h
+                l1 = compute_loss(X_inputs, Ys, try1_F, W)
+
+                try2_F = deepcopy(try_F)
+                try2_F[l][:, :, i].flat[j] += h
+                l2 = compute_loss(X_inputs, Ys, try2_F, W)
+                dF[j] = (l2 - l1) / (2 * h)
+            dFs[l][:, :, i] = dF.reshape(F[l][:, :, i].shape)
+
+    try_W = np.copy(W)
+    dW = np.zeros(np.prod(try_W.shape))
+    for j in range(len(dW)):
+        W_try1 = np.array(try_W, copy=True)
+        W_try1.flat[j] = try_W.flat[j] - h
+
+        l1 = compute_loss(X_inputs, Ys, F, W_try1)
+
+        W_try2 = np.array(try_W, copy=True)
+        W_try2.flat[j] = try_W.flat[j] + h
+
+        l2 = compute_loss(X_inputs, Ys, F, W_try2)
+
+        dW[j] = (l2 - l1) / (2 * h)
+    dW = dW.reshape(try_W.shape)
+
+    return dW, dFs[0], dFs[1]
+
+
+X_batch = X_train[:, :2]
+Y_batch = Y_train[:, :2]
 MFs = [make_mf_matrix(F[0], n_len), make_mf_matrix(F[1], n_len1)]
+X1_batch, X2_batch, P_batch = evaluate_classifier(X_batch, MFs, W)
+print(X_batch.shape, X1_batch.shape, X2_batch.shape, P_batch.shape, sep='\n')
 
-dW, dF1, dF2 = compute_gradients(X_batch, Y_batch, MFs, W)
-Gs = NumericalGradient(X_batch, Y_batch, ConvNet, 1e-6)
+dW, dF1, dF2 = compute_gradients(X_batch, Y_batch, F, W)
+dWn, dF1n, dF2n = numerical_gradients(X_batch, Y_batch, F, W, 1e-6)
 
-print(len(Gs))
-print(np.max(np.abs(dF1 - Gs[0])))
-print(np.max(np.abs(dF2 - Gs[1])))
-print(np.max(np.abs(dW - Gs[2])))
+print(np.max(np.abs(dW - dWn)), np.max(np.abs(dF1 - dF1n)),
+      np.max(np.abs(dF2 - dF2n)), sep='\n')

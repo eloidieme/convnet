@@ -98,7 +98,7 @@ class DataLoader:
             encoded.append([0]*d)
 
         encoded = np.array(encoded).T
-        return np.ravel(encoded)
+        return encoded.flatten(order='F')
 
     def make_data(self, save_data: bool = True):
         X = self._make_X(self.all_names)
