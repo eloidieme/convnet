@@ -56,18 +56,16 @@ class CNN_GPU:
 
     def make_mf_matrix(self, F, n_len):
         dd, k, nf = F.shape
-        V_F = []
-        for i in range(nf):
-            V_F.append(F[:, :, i].flatten(order='F'))
-        V_F = cp.array(V_F)
+        V_F = F.reshape(dd, -1, order='F')
+
         zero_nlen = cp.zeros((dd, nf))
         kk = n_len - k
-        Mf = []
+
+        Mf = cp.zeros((kk+1, dd, (kk+1)*nf))
         for i in range(kk+1):
-            tup = [zero_nlen.T for _ in range(kk + 1)]
-            tup[i] = V_F
-            Mf.append(cp.concatenate(tup, axis=1))
-        Mf = cp.concatenate(Mf, axis=0)
+            Mf[i, :, i*nf:(i+1)*nf] = V_F
+
+        Mf = Mf.reshape(-1, (kk+1)*nf, order='F')
         return Mf
 
     def make_mx_matrix(self, x_input, d, k, nf, n_len):
