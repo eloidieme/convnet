@@ -62,8 +62,17 @@ class DataLoader:
             X.append(encoded)
 
         return np.array(X).T
+    
+    def _make_Y(self, y: np.ndarray):
+        Y = []
+        for label in y:
+            one_hot = np.zeros(self.meta['n_classes'])
+            one_hot[int(label) - 1] = 1
+            Y.append(one_hot)
+        Y = np.array(Y).T
+        return Y
 
-    def _make_split(self, X, y):
+    def _make_split(self, X, Y, y):
         with open(self.val_idx, 'r') as file:
             S = file.read()
 
@@ -72,8 +81,8 @@ class DataLoader:
         for idx in indices_str:
             indices.append(int(idx))
 
-        X_train, X_val, y_train, y_val = np.delete(X, indices, axis=1), X[:,indices], np.delete(y, indices), y[indices]
-        return {"train": (X_train, y_train), "validation": (X_val, y_val)}
+        X_train, X_val, Y_train, Y_val, y_train, y_val = np.delete(X, indices, axis=1), X[:,indices], np.delete(Y, indices, axis=1), Y[:,indices], np.delete(y, indices), y[indices]
+        return {"train": (X_train, Y_train, y_train), "validation": (X_val, Y_val, y_val)}
     
     def encode_name(self, name: str):
         d, n_len, char_to_ind = self.meta['dimensionality'], self.meta['n_len'], self.meta['char_to_ind']
@@ -89,19 +98,22 @@ class DataLoader:
             encoded.append([0]*d)
 
         encoded = np.array(encoded).T
-        return np.ravel(encoded, order='F')
+        return np.ravel(encoded)
 
     def make_data(self, save_data: bool = True):
         X = self._make_X(self.all_names)
-        data = self._make_split(X, self.y)
+        Y = self._make_Y(self.y)
+        data = self._make_split(X, Y, self.y)
 
         if save_data:
             np.savez(
                 Path(f'{DATA_DIR}/train_val_data'),
                 X_train=data['train'][0], 
-                y_train=data['train'][1],
+                Y_train=data['train'][1],
+                y_train=data['train'][2],
                 X_val=data['validation'][0],
-                y_val=data['validation'][1]
+                Y_val=data['validation'][1],
+                y_val=data['validation'][2]
             )
         return data
     
