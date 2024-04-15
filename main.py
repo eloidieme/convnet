@@ -32,8 +32,8 @@ def main_training():
     }
 
     gd_params = {
-        'n_batch': 100,
-        'n_epochs': 100
+        'n_batch': 2,
+        'n_epochs': 1
     }
 
     if args.gpu:
