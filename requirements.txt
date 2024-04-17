@@ -14,5 +14,3 @@ ipykernel
 tqdm
 seaborn
 torch
-torchvision
-torchaudio
