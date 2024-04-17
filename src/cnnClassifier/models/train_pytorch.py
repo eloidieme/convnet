@@ -67,7 +67,6 @@ class CNN_Torch:
         self.balanced = balanced
 
         self._init_params()
-        self.MXs_input = torch.tensor([self.make_mx_matrix(self.X_train[:, i], self.d, self.k1, self.n1, self.n_len) for i in range(X_train.shape[1])], dtype=torch.float)
 
     def _init_params(self, p=0.01):
         sigma1 = np.sqrt(2/(p*self.d*self.k1*self.n1))
@@ -128,7 +127,7 @@ class CNN_Torch:
         P_batch = F.softmax(S_batch, dim=0)
         return X1_batch, X2_batch, P_batch
 
-    def compute_gradients(self, X_batch, Y_batch, MX_batch, F, W):
+    def compute_gradients(self, X_batch, Y_batch, F, W):
         MFs = [CNN_Torch.make_mf_matrix(F[0], self.n_len),
                CNN_Torch.make_mf_matrix(F[1], self.n_len1)]
         dF1 = torch.zeros(F[0].numel())
@@ -150,7 +149,7 @@ class CNN_Torch:
         for i in range(n): 
             dF1 += torch.matmul(
                 fact*G_batch[:, i].t(),
-                MX_batch[i,:,:]
+                self.make_mx_matrix(X_batch[:, i], self.d, self.k1, self.n1, self.n_len)
             )
         temp_shape_1 = (F[0].shape[2], F[0].shape[1], F[0].shape[0])
         temp_shape_2 = (F[1].shape[2], F[1].shape[1], F[1].shape[0])
@@ -189,7 +188,7 @@ class CNN_Torch:
         n_classes = torch.unique(self.y_train).size
         n_samples_per_class = min(torch.bincount(self.y_train.int() - 1))
 
-        dataset = TensorDataset(self.X_train.t(), self.Y_train.t(), self.MXs_input)
+        dataset = TensorDataset(self.X_train.t(), self.Y_train.t())
    
         train_losses = [self.compute_loss(
             self.X_train, self.Y_train, self.F, self.W)]
@@ -211,9 +210,9 @@ class CNN_Torch:
 
         for i in range(self.n_epochs):
             print(f"Epoch {i+1}/{self.n_epochs}")
-            for X_batch, Y_batch, MXs_batch in tqdm.tqdm(dataloader, desc="Processing batches"):
+            for X_batch, Y_batch in tqdm.tqdm(dataloader, desc="Processing batches"):
                 dW, dF1, dF2 = self.compute_gradients(
-                    X_batch.t(), Y_batch.t(), MXs_batch, self.F, self.W)
+                    X_batch.t(), Y_batch.t(), self.F, self.W)
                 mw = self.rho*mw + (1 - self.rho)*dW
                 m1 = self.rho*m1 + (1 - self.rho)*dF1
                 m2 = self.rho*m2 + (1 - self.rho)*dF2
