@@ -76,11 +76,11 @@ class CNN:
 
         self.F = []  # filters
         self.F.append(torch.normal(
-            0.0, sigma1, size=(self.d, self.k1, self.n1)))
+            0.0, sigma1, size=(self.d, self.k1, self.n1)).to(self.device))
         self.F.append(torch.normal(
-            0.0, sigma2, size=(self.n1, self.k2, self.n2)))
+            0.0, sigma2, size=(self.n1, self.k2, self.n2)).to(self.device))
         self.W = torch.normal(
-            0.0, sigma3, size=(self.K, self.f_size))  # FC layer weights
+            0.0, sigma3, size=(self.K, self.f_size)).to(self.device)  # FC layer weights
 
     @staticmethod
     def make_mf_matrix(F, n_len):
@@ -96,7 +96,7 @@ class CNN:
             tup = [zero_nlen.T for _ in range(kk + 1)]
             tup[i] = V_F
             Mf.append(torch.cat(tup, dim=1))
-        Mf = torch.cat(Mf, dim=0)
+        Mf = torch.cat(Mf, dim=0).to(self.device)
         return Mf
 
     def make_mx_matrix(self, x_input, d, k, nf, n_len):
@@ -105,7 +105,7 @@ class CNN:
         Mx = []
         for i in range(n_len - k + 1):
             Mx.append(torch.kron(I_nf, X_input[:d, i:i+k].t().flatten()))
-        Mx = torch.cat(Mx, dim=0)
+        Mx = torch.cat(Mx, dim=0).to(self.device)
         return Mx
 
     def compute_loss(self, X_batch, Y_batch, F, W):
