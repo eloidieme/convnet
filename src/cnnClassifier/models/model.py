@@ -84,6 +84,7 @@ class CNN:
 
     @staticmethod
     def make_mf_matrix(F, n_len):
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         dd, k, nf = F.shape
         V_F = []
         for i in range(nf):
@@ -96,12 +97,11 @@ class CNN:
             tup = [zero_nlen.T for _ in range(kk + 1)]
             tup[i] = V_F
             Mf.append(torch.cat(tup, dim=1))
-        Mf = torch.cat(Mf, dim=0).to(self.device)
-        return Mf
+        return torch.cat(Mf, dim=0).to(device)
 
     def make_mx_matrix(self, x_input, d, k, nf, n_len):
         X_input = x_input.reshape((n_len, -1)).t()
-        I_nf = torch.eye(nf)
+        I_nf = torch.eye(nf, device=self.device)
         Mx = []
         for i in range(n_len - k + 1):
             Mx.append(torch.kron(I_nf, X_input[:d, i:i+k].t().flatten()))
@@ -239,6 +239,7 @@ class CNN:
         return train_losses, val_losses, val_accs
 
     def run_training(self, figure_savepath=None, test_data=None, model_savepath=None):
+        print(f"Device: {self.device}")
         train_losses, val_losses, val_accs = self.mini_batch_gd()
         logger.info("Training completed.")
 
