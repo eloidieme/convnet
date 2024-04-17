@@ -1,1 +1,0 @@
-Accuracy on test data: 0.37962962962962965

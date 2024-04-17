@@ -1,17 +1,11 @@
 import numpy as np
-import argparse
 from cnnClassifier.data.make_dataset import DataLoader
 from cnnClassifier.models.train import CNN
-from cnnClassifier.models.train_gpu import CNN_GPU
-
-parser = argparse.ArgumentParser(description='Train the CNN model')
-parser.add_argument('--gpu', action='store_true', help='Use GPU for computations')
+from cnnClassifier.models.train_pytorch import CNN_Torch
+import cProfile, pstats
 
 def main_training():
-    args = parser.parse_args()
-
     load = DataLoader()
-    data = load.make_data()
 
     data_file = np.load('data/train_val_data.npz')
 
@@ -23,27 +17,28 @@ def main_training():
     y_val = data_file['y_val']
 
     network_params = {
-        'n1': 5,
+        'n1': 20,
         'k1': 5,
-        'n2': 5,
-        'k2': 5,
+        'n2': 20,
+        'k2': 3,
         'eta': 0.001,
         'rho': 0.9
     }
 
     gd_params = {
         'n_batch': 100,
-        'n_epochs': 100
+        'n_epochs': 2
     }
 
-    if args.gpu:
-        print('Training on GPU...')
-        model = CNN_GPU(X_train, Y_train, network_params, gd_params, load.meta, validation=(X_val, Y_val, y_val), seed=400)
-        model.run_training(500, "./reports/figures/train_fig", test_data=(X_val, y_val), model_savepath="./models")
-    else:
-        print("Running on CPU...")
-        model = CNN(X_train, Y_train, network_params, gd_params, load.meta, validation=(X_val, Y_val, y_val), seed=400)
-        model.run_training(500, "./reports/figures/train_fig", test_data=(X_val, y_val), model_savepath="./models")
+    #model = CNN(X_train, Y_train, y_train, network_params, gd_params, load.meta, validation=(X_val, Y_val, y_val), seed=400)
+    model = CNN_Torch(X_train, Y_train, y_train, network_params, gd_params, load.meta, validation=(X_val, Y_val, y_val), balanced=False, seed=400)
+
+    profiler = cProfile.Profile()
+    profiler.enable()
+    model.run_training("./reports/figures/train_fig", test_data=(X_val, y_val), model_savepath="./models")
+    profiler.disable()
+    stats = pstats.Stats(profiler).sort_stats('tottime')
+    stats.print_stats()
 
 if __name__ == "__main__":
     main_training()

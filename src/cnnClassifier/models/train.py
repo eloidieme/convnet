@@ -3,25 +3,50 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import tqdm
 import os
+import torch
+from torch.utils.data import TensorDataset, DataLoader
 
 from cnnClassifier import logger
 
+### TO-DO: replace numpy with PyTorch
+
 CLASS_LABELS = ["Arabic", "Chinese", "Czech", "Dutch", "English", "French", "German", "Greek", "Irish",
                 "Italian", "Japanese", "Korean", "Polish", "Portuguese", "Russian", "Scottish", "Spanish", "Vietnamese"]
-
 
 def softmax(x):
     """Compute softmax values for each sets of scores in x along columns."""
     e_x = np.exp(x - np.max(x, axis=0))  # subtract max for numerical stability
     return e_x / e_x.sum(axis=0)
 
+class BalancedBatchSampler:
+    def __init__(self, labels, n_samples, n_classes):
+        self.labels = np.array(labels)
+        self.n_samples = n_samples
+        self.n_classes = n_classes
+        self.indices = [np.where(labels == i)[0] for i in range(1, n_classes + 1)]
+
+    def __iter__(self):
+        for _ in range(len(self.indices[0]) // self.n_samples):
+            batch = []
+            for i in range(self.n_classes):
+                batch.append(np.random.choice(self.indices[i], self.n_samples, replace=False))
+            batch = np.hstack(batch)
+            np.random.shuffle(batch)
+            yield list(batch)
+
+    def __len__(self):
+        return len(self.indices[0]) // self.n_samples
+
 
 class CNN:
-    def __init__(self, X_train, Y_train, network_params, gd_params, metadata, validation=None, seed=None) -> None:
+    def __init__(self, X_train, Y_train, y_train, network_params, gd_params, metadata, validation=None, seed=None) -> None:
         if seed:
             np.random.seed(seed)
+        self.device = torch.device(
+            "cuda" if torch.cuda.is_available() else "cpu")
         self.X_train = X_train
         self.Y_train = Y_train
+        self.y_train = y_train
         self.validation = validation
         if validation:
             self.X_val = validation[0]
@@ -59,7 +84,8 @@ class CNN:
         self.W = np.random.normal(
             0.0, sigma3, (self.K, self.f_size))  # FC layer weights
 
-    def make_mf_matrix(self, F, n_len):
+    @staticmethod
+    def make_mf_matrix(F, n_len):
         dd, k, nf = F.shape
         V_F = []
         for i in range(nf):
@@ -85,16 +111,17 @@ class CNN:
         return Mx
 
     def compute_loss(self, X_batch, Y_batch, F, W):
-        MFs = [self.make_mf_matrix(F[0], self.n_len),
-               self.make_mf_matrix(F[1], self.n_len1)]
-        _, _, P_batch = self.evaluate_classifier(X_batch, MFs, W)
+        MFs = [CNN.make_mf_matrix(F[0], self.n_len),
+               CNN.make_mf_matrix(F[1], self.n_len1)]
+        _, _, P_batch = CNN.evaluate_classifier(X_batch, MFs, W)
         n_samples = Y_batch.shape[1]
         log_probs = np.log(P_batch)
         cross_entropy = -np.sum(Y_batch * log_probs)
         average_loss = cross_entropy / n_samples
         return average_loss
 
-    def evaluate_classifier(self, X_batch, MFs, W):
+    @staticmethod
+    def evaluate_classifier(X_batch, MFs, W):
         s1 = MFs[0] @ X_batch
         X1_batch = np.maximum(0, s1)
         s2 = MFs[1] @ X1_batch
@@ -104,11 +131,11 @@ class CNN:
         return X1_batch, X2_batch, P_batch
 
     def compute_gradients(self, X_batch, Y_batch, F, W):
-        MFs = [self.make_mf_matrix(F[0], self.n_len),
-               self.make_mf_matrix(F[1], self.n_len1)]
+        MFs = [CNN.make_mf_matrix(F[0], self.n_len),
+               CNN.make_mf_matrix(F[1], self.n_len1)]
         dF1 = np.zeros(F[0].size)
         dF2 = np.zeros(F[1].size)
-        X1_batch, X2_batch, P_batch = self.evaluate_classifier(X_batch, MFs, W)
+        X1_batch, X2_batch, P_batch = CNN.evaluate_classifier(X_batch, MFs, W)
         n = X_batch.shape[1]
         fact = 1/n
         G_batch = -(Y_batch - P_batch)
@@ -132,17 +159,17 @@ class CNN:
         return dW, dF1.reshape(F[0].shape, order='F'), dF2.reshape(F[1].shape, order='F')
 
     def compute_accuracy(self, X, y, F, W):
-        MFs = [self.make_mf_matrix(F[0], self.n_len),
-               self.make_mf_matrix(F[1], self.n_len1)]
-        P = self.evaluate_classifier(X, MFs, W)[-1]
+        MFs = [CNN.make_mf_matrix(F[0], self.n_len),
+               CNN.make_mf_matrix(F[1], self.n_len1)]
+        P = CNN.evaluate_classifier(X, MFs, W)[-1]
         y_pred = np.argmax(P, axis=0) + 1
         correct = y_pred[y == y_pred].shape[0]
         return correct / y_pred.shape[0]
 
     def compute_confusion_matrix(self, X, y, F, W):
-        MFs = [self.make_mf_matrix(F[0], self.n_len),
-               self.make_mf_matrix(F[1], self.n_len1)]
-        P = self.evaluate_classifier(X, MFs, W)[-1]
+        MFs = [CNN.make_mf_matrix(F[0], self.n_len),
+               CNN.make_mf_matrix(F[1], self.n_len1)]
+        P = CNN.evaluate_classifier(X, MFs, W)[-1]
         n_classes, n_samples = P.shape
         y_pred = np.argmax(P, axis=0)
         confusion_matrix = np.zeros((n_classes, n_classes), dtype=int)
@@ -160,47 +187,59 @@ class CNN:
         plt.xlabel('Predicted Label')
         plt.savefig(savepath)
 
-    def mini_batch_gd(self, n_update=500):
+    def mini_batch_gd(self):
+        n_classes = np.unique(self.y_train).size
+        n_samples_per_class = min(np.bincount(self.y_train.astype(int) - 1))
+
+        dataset = TensorDataset(torch.tensor(self.X_train, dtype=torch.float).t(),
+                                torch.tensor(self.Y_train, dtype=torch.float).t())
+        
+        balanced_batch_sampler = BalancedBatchSampler(self.y_train, n_samples_per_class, n_classes)
+        dataloader = DataLoader(dataset, batch_sampler=balanced_batch_sampler)
+
         train_losses = [self.compute_loss(
             self.X_train, self.Y_train, self.F, self.W)]
         val_losses = [self.compute_loss(
             self.X_val, self.Y_val, self.F, self.W)] if self.validation else None
         val_accs = [self.compute_accuracy(
             self.X_val, self.y_val, self.F, self.W)] if self.validation else None
-        n = self.X_train.shape[1]
+        
+        mw = np.zeros_like(self.W)
+        m1 = np.zeros_like(self.F[0])
+        m2 = np.zeros_like(self.F[1])
+        
+        dataset = TensorDataset(torch.tensor(self.X_train, dtype=torch.float).t(), torch.tensor(self.Y_train, dtype=torch.float).t())
+        dataloader = DataLoader(dataset, batch_size=self.n_batch, shuffle=True)
         for i in range(self.n_epochs):
             print(f"Epoch {i+1}/{self.n_epochs}")
-            for j in tqdm.tqdm(range(1, int(n/self.n_batch) + 1)):
-                start = (j-1)*self.n_batch
-                end = j*self.n_batch
-                perm = np.random.permutation(n)
-                X_batch = self.X_train[:, perm][:, start:end]
-                Y_batch = self.Y_train[:, perm][:, start:end]
+            for X_batch, Y_batch in tqdm.tqdm(dataloader, desc="Processing batches"):
                 dW, dF1, dF2 = self.compute_gradients(
-                    X_batch, Y_batch, self.F, self.W)
-                self.W -= self.eta*dW
-                self.F[0] -= self.eta*dF1
-                self.F[1] -= self.eta*dF2
-                if (i*self.n_batch + j) % n_update == 0:
-                    current_train_loss = self.compute_loss(
-                        self.X_train, self.Y_train, self.F, self.W)
-                    print(f"\t * Train loss: {current_train_loss}")
-                    train_losses.append(current_train_loss)
-                    if self.validation:
-                        current_val_loss = self.compute_loss(
-                            self.X_val, self.Y_val, self.F, self.W)
-                        print(f"\t * Validation loss: {current_val_loss}")
-                        val_losses.append(current_val_loss)
-                        current_val_acc = self.compute_accuracy(
-                            self.X_val, self.y_val, self.F, self.W)
-                        val_accs.append(current_val_acc)
-                        conf_mat = self.compute_confusion_matrix(
-                            self.X_val, self.y_val, self.F, self.W)
-                        self.plot_confusion_matrix(conf_mat, CLASS_LABELS, f"./reports/figures/conf_mat_{i*self.n_batch + j}")
+                    X_batch.numpy().T, Y_batch.numpy().T, self.F, self.W)
+                mw = self.rho*mw + (1 - self.rho)*dW
+                m1 = self.rho*m1 + (1 - self.rho)*dF1
+                m2 = self.rho*m2 + (1 - self.rho)*dF2
+                self.W -= self.eta*mw
+                self.F[0] -= self.eta*m1
+                self.F[1] -= self.eta*m2
+            current_train_loss = self.compute_loss(
+                self.X_train, self.Y_train, self.F, self.W)
+            print(f"\t * Train loss: {current_train_loss}")
+            train_losses.append(current_train_loss)
+            if self.validation:
+                current_val_loss = self.compute_loss(
+                    self.X_val, self.Y_val, self.F, self.W)
+                print(f"\t * Validation loss: {current_val_loss}")
+                val_losses.append(current_val_loss)
+                current_val_acc = self.compute_accuracy(
+                    self.X_val, self.y_val, self.F, self.W)
+                val_accs.append(current_val_acc)
+        conf_mat = self.compute_confusion_matrix(
+            self.X_val, self.y_val, self.F, self.W)
+        self.plot_confusion_matrix(conf_mat, CLASS_LABELS, f"./reports/figures/conf_mat")
         return train_losses, val_losses, val_accs
 
-    def run_training(self, n_update=500, figure_savepath=None, test_data=None, model_savepath=None):
-        train_losses, val_losses, val_accs = self.mini_batch_gd(n_update)
+    def run_training(self, figure_savepath=None, test_data=None, model_savepath=None):
+        train_losses, val_losses, val_accs = self.mini_batch_gd()
         logger.info("Training completed.")
 
         if model_savepath:
@@ -216,11 +255,11 @@ class CNN:
             logger.info("Accuracy on test data: %.3f", accuracy)
 
         plt.clf()
-        plt.plot(np.arange(0, len(train_losses))*n_update,
+        plt.plot(np.arange(self.n_epochs + 1),
                  train_losses, label="training loss")
-        plt.plot(np.arange(0, len(val_losses))*n_update,
+        plt.plot(np.arange(self.n_epochs + 1),
                  val_losses, label="validation loss")
-        plt.xlabel(f"update steps")
+        plt.xlabel(f"epochs")
         plt.ylabel("cross-entropy loss")
         plt.legend()
         plt.title(
@@ -229,9 +268,9 @@ class CNN:
         if figure_savepath:
             plt.savefig(figure_savepath + "_loss", bbox_inches='tight')
         plt.clf()
-        plt.plot(np.arange(0, len(val_accs))*n_update,
+        plt.plot(np.arange(self.n_epochs + 1),
                  val_accs, label="validation accuracies")
-        plt.xlabel(f"update steps")
+        plt.xlabel(f"epochs")
         plt.ylabel("accuracy")
         plt.legend()
         plt.title(

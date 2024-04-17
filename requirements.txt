@@ -13,4 +13,6 @@ scipy
 ipykernel
 tqdm
 seaborn
-cupy-cuda12x
+torch
+torchvision
+torchaudio
