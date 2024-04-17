@@ -231,6 +231,7 @@ class CNN:
                 val_losses.append(current_val_loss)
                 current_val_acc = self.compute_accuracy(
                     self.X_val, self.y_val, self.F, self.W)
+                print(f"\t * Validation accuracy: {current_val_acc}")
                 val_accs.append(current_val_acc)
         conf_mat = self.compute_confusion_matrix(
             self.X_val, self.y_val, self.F, self.W)

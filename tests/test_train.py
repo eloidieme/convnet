@@ -1,6 +1,5 @@
 from scipy.signal import convolve2d
 import numpy as np
-from copy import deepcopy
 from cnnClassifier.data.make_dataset import DataLoader
 
 np.random.seed(400)

@@ -22,9 +22,9 @@ def main_training():
         eta = 0.001
 
     network_params = {
-        'n1': 20,
+        'n1': 40,
         'k1': 5,
-        'n2': 20,
+        'n2': 30,
         'k2': 3,
         'eta': eta,
         'rho': 0.9
@@ -32,7 +32,7 @@ def main_training():
 
     gd_params = {
         'n_batch': 100,
-        'n_epochs': 120
+        'n_epochs': 50
     }
 
     model = CNN(X_train, Y_train, y_train, network_params, gd_params, load.meta, validation=(X_val, Y_val, y_val), balanced=True, seed=400)
