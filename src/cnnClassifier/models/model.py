@@ -84,20 +84,20 @@ class CNN:
 
     @staticmethod
     def make_mf_matrix(F, n_len):
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        device = F.device
         dd, k, nf = F.shape
-        V_F = []
-        for i in range(nf):
-            V_F.append(F[:, :, i].t().flatten())
-        V_F = torch.tensor(np.array(V_F), dtype=torch.float)
-        zero_nlen = torch.zeros((dd, nf))
+        V_F = [F[:, :, i].t().flatten() for i in range(nf)]
+        V_F = torch.stack(V_F, dim=0).to(device)
+
+        zero_nlen = torch.zeros((dd, nf), device=device)
         kk = n_len - k
         Mf = []
         for i in range(kk+1):
-            tup = [zero_nlen.T for _ in range(kk + 1)]
+            tup = [zero_nlen.T.clone() for _ in range(kk + 1)]
             tup[i] = V_F
             Mf.append(torch.cat(tup, dim=1))
-        return torch.cat(Mf, dim=0).to(device)
+
+        return torch.cat(Mf, dim=0)
 
     def make_mx_matrix(self, x_input, d, k, nf, n_len):
         X_input = x_input.reshape((n_len, -1)).t()
@@ -131,8 +131,8 @@ class CNN:
     def compute_gradients(self, X_batch, Y_batch, F, W):
         MFs = [CNN.make_mf_matrix(F[0], self.n_len),
                CNN.make_mf_matrix(F[1], self.n_len1)]
-        dF1 = torch.zeros(F[0].numel())
-        dF2 = torch.zeros(F[1].numel())
+        dF1 = torch.zeros(F[0].numel(), device=self.device)
+        dF2 = torch.zeros(F[1].numel(), device=self.device)
         X1_batch, X2_batch, P_batch = CNN.evaluate_classifier(X_batch, MFs, W)
         n = X_batch.shape[1]
         fact = 1/n
@@ -198,9 +198,9 @@ class CNN:
         val_accs = [self.compute_accuracy(
             self.X_val, self.y_val, self.F, self.W)] if self.validation else None
         
-        mw = torch.zeros_like(self.W)
-        m1 = torch.zeros_like(self.F[0])
-        m2 = torch.zeros_like(self.F[1])
+        mw = torch.zeros_like(self.W, device=self.device)
+        m1 = torch.zeros_like(self.F[0], device=self.device)
+        m2 = torch.zeros_like(self.F[1], device=self.device)
         
         if self.balanced:
             balanced_batch_sampler = BalancedBatchSampler(self.y_train, n_samples_per_class, n_classes)
