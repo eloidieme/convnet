@@ -32,7 +32,7 @@ def main_training():
 
     gd_params = {
         'n_batch': 100,
-        'n_epochs': 50
+        'n_epochs': 2 
     }
 
     model = CNN(X_train, Y_train, y_train, network_params, gd_params, load.meta, validation=(X_val, Y_val, y_val), balanced=True, seed=400)

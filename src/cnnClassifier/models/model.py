@@ -6,7 +6,7 @@ import os
 import torch
 from torch.utils.data import TensorDataset, DataLoader
 import torch.nn.functional as F
-
+from torch import Tensor
 from cnnClassifier import logger
 
 CLASS_LABELS = ["Arabic", "Chinese", "Czech", "Dutch", "English", "French", "German", "Greek", "Irish",
@@ -116,7 +116,7 @@ class CNN:
         log_probs = torch.log(P_batch)
         cross_entropy = -torch.sum(Y_batch * log_probs)
         average_loss = cross_entropy / n_samples
-        return average_loss
+        return average_loss.item()
 
     @staticmethod
     def evaluate_classifier(X_batch, MFs, W):
@@ -162,7 +162,7 @@ class CNN:
         P = CNN.evaluate_classifier(X, MFs, W)[-1]
         y_pred = torch.argmax(P, dim=0) + 1
         correct = y_pred[y == y_pred].shape[0]
-        return correct / y_pred.shape[0]
+        return (correct / y_pred.shape[0])
 
     def compute_confusion_matrix(self, X, y, F, W):
         MFs = [CNN.make_mf_matrix(F[0], self.n_len),
