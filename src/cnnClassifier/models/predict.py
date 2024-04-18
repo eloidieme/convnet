@@ -2,6 +2,7 @@ import numpy as np
 import torch
 from cnnClassifier.data.make_dataset import DataLoader
 from cnnClassifier.models.model import CNN, CLASS_LABELS
+import matplotlib.pyplot as plt
 
 k1 = 5  # width of the filters at layer 1 (final shape: d x k1)
 load = DataLoader()
@@ -22,4 +23,15 @@ def predict(names, F1_path, F2_path, W_path):
     MFs = [CNN.make_mf_matrix(F[0], n_len), CNN.make_mf_matrix(F[1], n_len1)]
     P_pred = CNN.evaluate_classifier(X_test, MFs, W)[-1]
     y_pred = np.argmax(P_pred, axis=0)
+    probabilities = list(np.array(P_pred).reshape((-1,)))
+    x_pos = np.arange(len(CLASS_LABELS))
+    plt.figure(figsize=(14, 8)) 
+    plt.bar(x_pos, probabilities, color='skyblue')
+    plt.title(f'Probability distribution across classes for name {names[0]}')
+    plt.xlabel('Class')
+    plt.ylabel('Probability')
+    plt.xticks(x_pos, CLASS_LABELS, rotation=45, ha="right")
+    plt.grid(axis='y', linestyle='--', alpha=0.7)
+    plt.tight_layout()
+    plt.show()
     return np.array(CLASS_LABELS)[y_pred]
